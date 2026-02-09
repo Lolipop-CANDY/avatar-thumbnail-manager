@@ -1,0 +1,13 @@
+{
+  "name": "com.lollipopcandy.avatar-thumbnail-manager",
+  "displayName": "Avatar Thumbnail Manager",
+  "version": "1.0.0",
+  "unity": "2022.3",
+  "description": "アバターサムネイル撮影管理ツール - VRChatアバターのサムネイル画像を簡単に撮影できるエディタ拡張",
+  "author": {
+    "name": "ろりぽっぷCANDY",
+    "url": "https://github.com/lollipopcandy"
+  },
+  "vpmDependencies": {},
+  "url": "https://github.com/lollipopcandy/avatar-thumbnail-manager/releases/download/v1.0.0/com.lollipopcandy.avatar-thumbnail-manager-1.0.0.zip"
+}
