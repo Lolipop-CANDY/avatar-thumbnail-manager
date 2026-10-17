@@ -152,6 +152,12 @@ namespace LollipopCandy.AvatarHub
             }
         }
 
+        private string AdvancedSummary()
+        {
+            int n = (s.hideBoneProxy ? 1 : 0) + (s.hideEditorOnly ? 1 : 0) + s.HideTokens().Length;
+            return n == 0 ? "ルールなし" : n + "件のルール";
+        }
+
         private void DrawSettingsTab()
         {
             int cloneBefore = CloneSig();
@@ -217,15 +223,21 @@ namespace LollipopCandy.AvatarHub
                     : "NDMF(Modular Avatar等)のビルド処理を通した結果で撮影します。MAの既定状態が適用されます。NDMF未導入や失敗時はシーンの見た目で撮影します。",
                     Ui.WrapMuted);
 
-                if (s.Mode == CaptureMode.SceneExact)
+            }
+
+            if (s.Mode == CaptureMode.SceneExact)
+            {
+                using (Ui.Card("詳細設定: 小物の非表示", AdvancedSummary()))
                 {
-                    GUILayout.Space(2f);
-                    GUILayout.Label("撮影から外すもの", Ui.Muted);
-                    UndoToggle("MA Bone Proxy を隠す", ref s.hideBoneProxy);
-                    UndoToggle("EditorOnly タグを隠す", ref s.hideEditorOnly);
+                    GUILayout.Label("既定ではシーンの表示そのままで撮影します。小物(MAで装着するアクセサリー等)を" +
+                                    "全アバター共通で隠したい時だけ、下のルールをオンにしてください。" +
+                                    "※ルールに一致したオブジェクトは、その子も含めて写らなくなります(髪が消える場合はオフにしてください)。", Ui.WrapMuted);
+                    UndoToggle("MA Bone Proxy を持つオブジェクトを隠す", ref s.hideBoneProxy);
+                    UndoToggle("EditorOnly タグのオブジェクトを隠す", ref s.hideEditorOnly);
                     EditorGUI.BeginChangeCheck();
                     string names = EditorGUILayout.DelayedTextField("名前に含む(, 区切り)", s.hideNames);
                     if (EditorGUI.EndChangeCheck()) { RecordUndo("非表示ルール"); s.hideNames = names; }
+                    GUILayout.Label("例: ribbon, glasses, 小物。アバターごとに細かく選ぶ場合は「撮影」タブの「表示の調整」を使います。", Ui.WrapMuted);
                 }
             }
 

@@ -115,6 +115,15 @@ namespace LollipopCandy.AvatarHub
         public bool bgOverride;
         public BackgroundSpec bg = new BackgroundSpec();
 
+        // 表示の個別上書き(アバタールートからの相対パス)
+        public List<string> hidePaths = new List<string>();
+        public List<string> showPaths = new List<string>();
+
+        public bool HasVisibilityOverrides
+        {
+            get { return (hidePaths != null && hidePaths.Count > 0) || (showPaths != null && showPaths.Count > 0); }
+        }
+
         public bool HasPoseOrExpression
         {
             get { return !string.IsNullOrEmpty(clipGuid) || (blends != null && blends.Count > 0); }
@@ -161,6 +170,7 @@ namespace LollipopCandy.AvatarHub
         public static readonly Vector3 DefaultRotation = new Vector3(0f, 180f, 0f);
 
         public bool initialized;
+        public int rev;   // 設定の世代(移行用)
 
         // カメラ
         public Vector3 camPos = DefaultPosition;
@@ -178,8 +188,8 @@ namespace LollipopCandy.AvatarHub
         public bool showRetakeWarning = true;
         public bool overwriteList;
         public int captureMode = (int)CaptureMode.SceneExact;
-        public bool hideBoneProxy = true;
-        public bool hideEditorOnly = true;
+        public bool hideBoneProxy;   // 既定は「シーンの表示そのまま」。詳細設定でON
+        public bool hideEditorOnly;
         public string hideNames = "";
         public bool liveSync = true;
         public bool reuseSharedThumb;
@@ -249,6 +259,13 @@ namespace LollipopCandy.AvatarHub
 
         public void Sanitize()
         {
+            if (rev < 2)
+            {
+                // 旧設定で既定ONだった非表示ルールは、髪などまで消える原因になるためOFFに戻す
+                hideBoneProxy = false;
+                hideEditorOnly = false;
+                rev = 2;
+            }
             if (bg == null) bg = new BackgroundSpec();
             if (exprPresets == null) exprPresets = new List<ExprPreset>();
             outW = Mathf.Clamp(outW, 64, 4096);

@@ -444,6 +444,13 @@ namespace LollipopCandy.AvatarHub
         private Renderer[] _srcR = new Renderer[0];
         private Renderer[] _dstR = new Renderer[0];
         private bool[] _forcedR = new bool[0];
+        private string[] _paths = new string[0];     // _srcT と並行: ルートからの相対パス
+        private string[] _rPaths = new string[0];    // _srcR と並行
+        private bool[] _ovHide = new bool[0];
+        private bool[] _ovShow = new bool[0];
+        private bool[] _ovHideR = new bool[0];
+        private bool[] _ovShowR = new bool[0];
+        private Transform _srcRoot;
 
         // ポーズ・表情の復元用
         private Transform[] _poseT = new Transform[0];
@@ -584,6 +591,11 @@ namespace LollipopCandy.AvatarHub
             _srcT = srcList.ToArray();
             _dstT = dstList.ToArray();
             _forced = new bool[_dstT.Length];
+            _srcRoot = source.transform;
+            _paths = new string[_srcT.Length];
+            for (int i = 0; i < _srcT.Length; i++) _paths[i] = RelativePath(_srcT[i]);
+            _ovHide = new bool[_srcT.Length];
+            _ovShow = new bool[_srcT.Length];
 
             string[] tokens = s.HideTokens();
             for (int i = 0; i < _dstT.Length; i++)
@@ -605,9 +617,10 @@ namespace LollipopCandy.AvatarHub
             var sr = new List<Renderer>();
             var dr = new List<Renderer>();
             var fr = new List<bool>();
+            var rp = new List<string>();
             Renderer rootSrc = source.GetComponent<Renderer>();
             Renderer rootDst = _root.GetComponent<Renderer>();
-            if (rootSrc != null && rootDst != null) { sr.Add(rootSrc); dr.Add(rootDst); fr.Add(false); }
+            if (rootSrc != null && rootDst != null) { sr.Add(rootSrc); dr.Add(rootDst); fr.Add(false); rp.Add(""); }
             for (int i = 0; i < _srcT.Length; i++)
             {
                 Renderer a = _srcT[i].GetComponent<Renderer>();
@@ -616,10 +629,75 @@ namespace LollipopCandy.AvatarHub
                 sr.Add(a);
                 dr.Add(b);
                 fr.Add(_forced[i]);
+                rp.Add(_paths[i]);
             }
             _srcR = sr.ToArray();
             _dstR = dr.ToArray();
             _forcedR = fr.ToArray();
+            _rPaths = rp.ToArray();
+            _ovHideR = new bool[_srcR.Length];
+            _ovShowR = new bool[_srcR.Length];
+        }
+
+        private string RelativePath(Transform t)
+        {
+            var parts = new List<string>();
+            while (t != null && t != _srcRoot)
+            {
+                parts.Add(t.name);
+                t = t.parent;
+            }
+            parts.Reverse();
+            return string.Join("/", parts.ToArray());
+        }
+
+        /// <summary>撮影に含められる(Rendererを持つ)オブジェクトの一覧。パスとシーン上の表示状態。</summary>
+        public List<KeyValuePair<string, bool>> ListRendererObjects()
+        {
+            var list = new List<KeyValuePair<string, bool>>();
+            var seen = new HashSet<string>();
+            for (int i = 0; i < _srcT.Length; i++)
+            {
+                if (_srcT[i] == null) continue;
+                if (_srcT[i].GetComponent<Renderer>() == null) continue;
+                if (!seen.Add(_paths[i])) continue;
+                list.Add(new KeyValuePair<string, bool>(_paths[i], _srcT[i].gameObject.activeInHierarchy));
+            }
+            return list;
+        }
+
+        /// <summary>アバター個別の「隠す / 強制表示」を設定する(SceneExactのみ)。</summary>
+        public void SetVisibilityOverrides(List<string> hide, List<string> show)
+        {
+            if (!_sceneExact) return;
+            var hs = new HashSet<string>(hide ?? new List<string>());
+            var ss = new HashSet<string>();
+            if (show != null)
+            {
+                foreach (string p in show)
+                {
+                    // 強制表示は親も有効にしないと見えないため、祖先も対象にする
+                    string cur = p;
+                    while (!string.IsNullOrEmpty(cur))
+                    {
+                        ss.Add(cur);
+                        int k = cur.LastIndexOf('/');
+                        cur = k >= 0 ? cur.Substring(0, k) : "";
+                    }
+                }
+            }
+            var exactShow = new HashSet<string>(show ?? new List<string>());
+            for (int i = 0; i < _paths.Length; i++)
+            {
+                _ovHide[i] = hs.Contains(_paths[i]);
+                _ovShow[i] = !_ovHide[i] && ss.Contains(_paths[i]);
+            }
+            for (int i = 0; i < _rPaths.Length; i++)
+            {
+                _ovHideR[i] = hs.Contains(_rPaths[i]);
+                _ovShowR[i] = !_ovHideR[i] && exactShow.Contains(_rPaths[i]);
+            }
+            SyncFromScene();
         }
 
         /// <summary>元シーンの表示状態(GameObjectのactive/Rendererのenabled)を複製へ反映する。変化があれば true。</summary>
@@ -632,7 +710,7 @@ namespace LollipopCandy.AvatarHub
             {
                 Transform s = _srcT[i], d = _dstT[i];
                 if (s == null || d == null) continue;
-                bool want = !_forced[i] && s.gameObject.activeSelf;
+                bool want = _ovShow[i] || (!_forced[i] && !_ovHide[i] && s.gameObject.activeSelf);
                 GameObject dg = d.gameObject;
                 if (dg.activeSelf != want)
                 {
@@ -645,7 +723,7 @@ namespace LollipopCandy.AvatarHub
             {
                 Renderer s = _srcR[i], d = _dstR[i];
                 if (s == null || d == null) continue;
-                bool want = !_forcedR[i] && s.enabled;
+                bool want = _ovShowR[i] || (!_forcedR[i] && !_ovHideR[i] && s.enabled);
                 if (d.enabled != want)
                 {
                     d.enabled = want;
@@ -707,6 +785,7 @@ namespace LollipopCandy.AvatarHub
         public void ApplyLook(AvatarLook look)
         {
             RestoreBase();
+            if (look != null) SetVisibilityOverrides(look.hidePaths, look.showPaths);
             if (look != null)
             {
                 AnimationClip clip = ThumbAssets.LoadClip(look.clipGuid);

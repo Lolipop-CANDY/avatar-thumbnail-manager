@@ -19,7 +19,91 @@ namespace LollipopCandy.AvatarHub
             if (_session != null) DrawIssuesCard();
             DrawCameraCard();
             DrawBackgroundCard();
+            if (_session != null && _previewEntry != null) DrawVisibilityCard();
             if (_session != null && _previewEntry != null) DrawLookCard();
+        }
+
+        // ---- 表示の調整(小物の非表示 / 髪などの強制表示) ----
+
+        private void AddPathMenu(GenericMenu menu, string prefix, List<string> target, string path, bool sceneActive, bool isHide)
+        {
+            string label = prefix + path + (sceneActive ? "" : "  [シーンで非表示]");
+            bool already = target.Contains(path);
+            AvatarLook look = _previewEntry.look;
+            string p = path;
+            menu.AddItem(new GUIContent(label), already, () =>
+            {
+                if (target.Contains(p)) target.Remove(p);
+                else
+                {
+                    target.Add(p);
+                    (isHide ? look.showPaths : look.hidePaths).Remove(p); // 隠す/表示は同時にしない
+                }
+                LookChanged();
+            });
+        }
+
+        private void DrawVisibilityCard()
+        {
+            if (!_session.SupportsLiveSync) return;
+            AvatarLook look = _previewEntry.look;
+            string right = look.HasVisibilityOverrides ? (look.hidePaths.Count + look.showPaths.Count) + "件設定中" : null;
+            using (Ui.Card("表示の調整", right))
+            {
+                GUILayout.Label("このアバターだけ、撮影に写すもの・写さないものを選べます。" +
+                                "小物が邪魔なら「隠す」、髪などが写らない時は「強制表示」を使ってください。", Ui.WrapMuted);
+
+                List<KeyValuePair<string, bool>> objs = null;
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    if (Ui.Button("＋ 隠すものを選ぶ", false, 0f, 24f))
+                    {
+                        objs = _session.ListRendererObjects();
+                        var menu = new GenericMenu();
+                        foreach (var kv in objs) AddPathMenu(menu, "", look.hidePaths, kv.Key, kv.Value, true);
+                        menu.ShowAsContext();
+                    }
+                    if (Ui.Button("＋ 強制表示するものを選ぶ", false, 0f, 24f))
+                    {
+                        objs = _session.ListRendererObjects();
+                        var menu = new GenericMenu();
+                        foreach (var kv in objs) AddPathMenu(menu, "", look.showPaths, kv.Key, kv.Value, false);
+                        menu.ShowAsContext();
+                    }
+                }
+
+                DrawPathList("隠す", look.hidePaths);
+                DrawPathList("強制表示", look.showPaths);
+
+                using (new EditorGUI.DisabledScope(!look.HasVisibilityOverrides))
+                {
+                    if (Ui.Button("表示の調整をリセット", false, 0f, 22f))
+                    {
+                        look.hidePaths.Clear();
+                        look.showPaths.Clear();
+                        LookChanged();
+                    }
+                }
+            }
+        }
+
+        private void DrawPathList(string title, List<string> list)
+        {
+            int remove = -1;
+            for (int i = 0; i < list.Count; i++)
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.Label(title + ": " + list[i], EditorStyles.miniLabel);
+                    GUILayout.FlexibleSpace();
+                    if (GUILayout.Button("×", EditorStyles.miniButton, GUILayout.Width(22f))) remove = i;
+                }
+            }
+            if (remove >= 0)
+            {
+                list.RemoveAt(remove);
+                LookChanged();
+            }
         }
 
         // ---- プレビュー ----
