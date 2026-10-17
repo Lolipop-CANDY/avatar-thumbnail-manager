@@ -11,7 +11,7 @@ namespace LollipopCandy.AvatarHub
 {
     public partial class AvatarThumbnailManager
     {
-        private string _presetName = "";
+        private int _previewBtn;
 
         private void DrawCaptureTab()
         {
@@ -21,89 +21,6 @@ namespace LollipopCandy.AvatarHub
             DrawBackgroundCard();
             if (_session != null && _previewEntry != null) DrawVisibilityCard();
             if (_session != null && _previewEntry != null) DrawLookCard();
-        }
-
-        // ---- 表示の調整(小物の非表示 / 髪などの強制表示) ----
-
-        private void AddPathMenu(GenericMenu menu, string prefix, List<string> target, string path, bool sceneActive, bool isHide)
-        {
-            string label = prefix + path + (sceneActive ? "" : "  [シーンで非表示]");
-            bool already = target.Contains(path);
-            AvatarLook look = _previewEntry.look;
-            string p = path;
-            menu.AddItem(new GUIContent(label), already, () =>
-            {
-                if (target.Contains(p)) target.Remove(p);
-                else
-                {
-                    target.Add(p);
-                    (isHide ? look.showPaths : look.hidePaths).Remove(p); // 隠す/表示は同時にしない
-                }
-                LookChanged();
-            });
-        }
-
-        private void DrawVisibilityCard()
-        {
-            if (!_session.SupportsLiveSync) return;
-            AvatarLook look = _previewEntry.look;
-            string right = look.HasVisibilityOverrides ? (look.hidePaths.Count + look.showPaths.Count) + "件設定中" : null;
-            using (Ui.Card("表示の調整", right))
-            {
-                GUILayout.Label("このアバターだけ、撮影に写すもの・写さないものを選べます。" +
-                                "小物が邪魔なら「隠す」、髪などが写らない時は「強制表示」を使ってください。", Ui.WrapMuted);
-
-                List<KeyValuePair<string, bool>> objs = null;
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    if (Ui.Button("＋ 隠すものを選ぶ", false, 0f, 24f))
-                    {
-                        objs = _session.ListRendererObjects();
-                        var menu = new GenericMenu();
-                        foreach (var kv in objs) AddPathMenu(menu, "", look.hidePaths, kv.Key, kv.Value, true);
-                        menu.ShowAsContext();
-                    }
-                    if (Ui.Button("＋ 強制表示するものを選ぶ", false, 0f, 24f))
-                    {
-                        objs = _session.ListRendererObjects();
-                        var menu = new GenericMenu();
-                        foreach (var kv in objs) AddPathMenu(menu, "", look.showPaths, kv.Key, kv.Value, false);
-                        menu.ShowAsContext();
-                    }
-                }
-
-                DrawPathList("隠す", look.hidePaths);
-                DrawPathList("強制表示", look.showPaths);
-
-                using (new EditorGUI.DisabledScope(!look.HasVisibilityOverrides))
-                {
-                    if (Ui.Button("表示の調整をリセット", false, 0f, 22f))
-                    {
-                        look.hidePaths.Clear();
-                        look.showPaths.Clear();
-                        LookChanged();
-                    }
-                }
-            }
-        }
-
-        private void DrawPathList(string title, List<string> list)
-        {
-            int remove = -1;
-            for (int i = 0; i < list.Count; i++)
-            {
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    GUILayout.Label(title + ": " + list[i], EditorStyles.miniLabel);
-                    GUILayout.FlexibleSpace();
-                    if (GUILayout.Button("×", EditorStyles.miniButton, GUILayout.Width(22f))) remove = i;
-                }
-            }
-            if (remove >= 0)
-            {
-                list.RemoveAt(remove);
-                LookChanged();
-            }
         }
 
         // ---- プレビュー ----
@@ -188,7 +105,7 @@ namespace LollipopCandy.AvatarHub
                 }
 
                 string live = (s.liveSync && _session.SupportsLiveSync) ? " ・ リアルタイム同期 ON" : "";
-                GUILayout.Label(_session.Description + live + "  (ドラッグで移動/回転・ホイールで前後)", Ui.Muted);
+                GUILayout.Label(_session.Description + live + "  (左ドラッグ: 移動 / 右ドラッグ: 回転 / ホイール: 前後)", Ui.Muted);
             }
         }
 
@@ -237,9 +154,10 @@ namespace LollipopCandy.AvatarHub
             switch (ev.GetTypeForControl(id))
             {
                 case EventType.MouseDown:
-                    if (ev.button == 0 && r.Contains(ev.mousePosition))
+                    if ((ev.button == 0 || ev.button == 1) && r.Contains(ev.mousePosition))
                     {
                         GUIUtility.hotControl = id;
+                        _previewBtn = ev.button;
                         RecordUndo("カメラ操作");
                         ev.Use();
                     }
@@ -247,7 +165,8 @@ namespace LollipopCandy.AvatarHub
                 case EventType.MouseDrag:
                     if (GUIUtility.hotControl == id)
                     {
-                        DragCamera(ev.delta, r.height);
+                        if (_previewBtn == 1) RotateCamera(ev.delta);   // 右ドラッグ: その場で回転
+                        else DragCamera(ev.delta, r.height);
                         ev.Use();
                         GUI.changed = true;
                     }
@@ -274,22 +193,27 @@ namespace LollipopCandy.AvatarHub
         private void DragCamera(Vector2 delta, float rectHeight)
         {
             if (_session == null) return;
-            if (!s.usePanYaw)
+            if (s.usePanYaw)
             {
-                // 軸: 向きは変えず、画面の左右・上下へ平行移動
-                float dist = _session.CameraDistance(CurrentRig());
-                float k = 2f * dist * Mathf.Tan(_session.VerticalFovRad * 0.5f) / Mathf.Max(1f, rectHeight);
-                Quaternion q = Quaternion.Euler(s.camRot.x, s.camRot.y, 0f);
-                Vector3 right = q * Vector3.right;
-                Vector3 up = q * Vector3.up;
-                s.camPos = s.camPos + (right * (-delta.x) + up * delta.y) * k;
+                RotateCamera(delta); // 回転モード: 左ドラッグも回転
+                return;
             }
-            else
-            {
-                // 回転: その場で向きだけを変える
-                s.camRot.y = Mathf.Repeat(s.camRot.y - delta.x * 0.2f, 360f);
-                s.camRot.x = Mathf.Clamp(s.camRot.x - delta.y * 0.2f, -89f, 89f);
-            }
+            // 軸: 向きは変えず、画面の左右・上下へ平行移動
+            float dist = _session.CameraDistance(CurrentRig());
+            float k = 2f * dist * Mathf.Tan(_session.VerticalFovRad * 0.5f) / Mathf.Max(1f, rectHeight);
+            Quaternion q = Quaternion.Euler(s.camRot.x, s.camRot.y, 0f);
+            Vector3 right = q * Vector3.right;
+            Vector3 up = q * Vector3.up;
+            s.camPos = s.camPos + (right * (-delta.x) + up * delta.y) * k;
+            s.framing = (int)Framing.Custom;
+        }
+
+        /// <summary>カメラの位置は動かさず、向きだけを変える。</summary>
+        private void RotateCamera(Vector2 delta)
+        {
+            if (_session == null) return;
+            s.camRot.y = Mathf.Repeat(s.camRot.y + delta.x * 0.25f, 360f);
+            s.camRot.x = Mathf.Clamp(s.camRot.x + delta.y * 0.25f, -89f, 89f);
             s.framing = (int)Framing.Custom;
         }
 
@@ -301,6 +225,149 @@ namespace LollipopCandy.AvatarHub
             Vector3 fwd = q * Vector3.forward;
             s.camPos = s.camPos - fwd * (scrollY * 0.04f * dist);
             s.framing = (int)Framing.Custom;
+        }
+
+        // ---- 表示の調整(小物の非表示 / 髪などの強制表示) ----
+
+        private static bool GroupsContain(List<VisGroup> groups, string path)
+        {
+            foreach (VisGroup g in groups) if (g.paths.Contains(path)) return true;
+            return false;
+        }
+
+        private void ShowCandidateMenu(List<VisGroup> groups)
+        {
+            var menu = new GenericMenu();
+            var seen = new HashSet<string>();
+            string ghead = "まとまり(衣装・ギミック)/";
+            string ohead = "メッシュ単体/";
+
+            foreach (RenderSession.Bundle b in _session.ListBundles())
+            {
+                seen.Add(b.path);
+                AddCandidate(menu, ghead + b.path, groups, b.path, b.activeInScene);
+            }
+            foreach (KeyValuePair<string, bool> kv in _session.ListRendererObjects())
+            {
+                if (seen.Contains(kv.Key)) continue;
+                AddCandidate(menu, ohead + kv.Key, groups, kv.Key, kv.Value);
+            }
+            menu.ShowAsContext();
+        }
+
+        private void AddCandidate(GenericMenu menu, string label, List<VisGroup> groups, string path, bool active)
+        {
+            string p = path;
+            bool included = GroupsContain(groups, p);
+            menu.AddItem(new GUIContent(label + (active ? "" : "  [シーンで非表示]")), included, () =>
+            {
+                if (included)
+                {
+                    groups.RemoveAll(g => g.paths.Count == 1 && g.paths[0] == p);
+                }
+                else
+                {
+                    int k = p.LastIndexOf('/');
+                    groups.Add(new VisGroup { name = k >= 0 ? p.Substring(k + 1) : p, paths = new List<string> { p } });
+                }
+                LookChanged();
+            });
+        }
+
+        private void DrawVisibilityCard()
+        {
+            if (!_session.SupportsLiveSync) return;
+            AvatarLook look = _previewEntry.look;
+            int n = look.hideGroups.Count + look.showGroups.Count;
+            using (Ui.Card("表示の調整", n > 0 ? n + "件設定中" : null))
+            {
+                GUILayout.Label("このアバターだけ、撮影に写すもの・写さないものを選べます。" +
+                                "「＋」でアバター内のオブジェクトから自動検出した候補を選ぶか、ヒエラルキーからドラッグして追加します。" +
+                                "複数をまとめてドラッグすると、1つのまとまりとして登録されます。", Ui.WrapMuted);
+                DrawVisSection("隠すもの(小物・衣装・ギミックなど)", look.hideGroups);
+                GUILayout.Space(4f);
+                DrawVisSection("強制表示(シーンで非表示のものを写したい時)", look.showGroups);
+            }
+        }
+
+        private void DrawVisSection(string title, List<VisGroup> groups)
+        {
+            GUILayout.Label(title, Ui.BigLabel);
+
+            int remove = -1;
+            for (int i = 0; i < groups.Count; i++)
+            {
+                VisGroup g = groups[i];
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUI.BeginChangeCheck();
+                    bool en = EditorGUILayout.Toggle(g.enabled, GUILayout.Width(18f));
+                    string nm = EditorGUILayout.DelayedTextField(g.name ?? "", GUILayout.MinWidth(80f));
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        g.enabled = en;
+                        g.name = nm;
+                        LookChanged();
+                    }
+                    GUILayout.Label(g.paths.Count + "個", Ui.Muted, GUILayout.Width(36f));
+                    if (GUILayout.Button("×", EditorStyles.miniButton, GUILayout.Width(22f))) remove = i;
+                }
+            }
+            if (remove >= 0)
+            {
+                groups.RemoveAt(remove);
+                LookChanged();
+            }
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (Ui.Button("＋ 自動検出から追加", false, 0f, 24f)) ShowCandidateMenu(groups);
+            }
+            DrawVisDropArea(groups);
+        }
+
+        private void DrawVisDropArea(List<VisGroup> groups)
+        {
+            Rect r = GUILayoutUtility.GetRect(1f, 34f, GUILayout.ExpandWidth(true));
+            Event ev = Event.current;
+            bool hover = r.Contains(ev.mousePosition) && DragAndDrop.objectReferences.Length > 0;
+            if (ev.type == EventType.Repaint)
+            {
+                Color c = hover ? Ui.Accent : Ui.MutedText;
+                c.a = hover ? 0.28f : 0.10f;
+                EditorGUI.DrawRect(r, c);
+                GUI.Label(r, "ここにヒエラルキーのオブジェクトをドラッグ(複数可)", Ui.WrapMuted);
+            }
+            if ((ev.type == EventType.DragUpdated || ev.type == EventType.DragPerform) && r.Contains(ev.mousePosition))
+            {
+                DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
+                if (ev.type == EventType.DragPerform)
+                {
+                    DragAndDrop.AcceptDrag();
+                    var paths = new List<string>();
+                    var names = new List<string>();
+                    foreach (Object o in DragAndDrop.objectReferences)
+                    {
+                        GameObject go = o as GameObject;
+                        string p = _session != null ? _session.PathOf(go) : null;
+                        if (p == null || paths.Contains(p)) continue;
+                        paths.Add(p);
+                        names.Add(go.name);
+                    }
+                    Defer(() =>
+                    {
+                        if (paths.Count == 0)
+                        {
+                            ShowNotification(new GUIContent("このアバターの中のオブジェクトをドラッグしてください"));
+                            return;
+                        }
+                        string name = paths.Count == 1 ? names[0] : names[0] + " ほか" + (paths.Count - 1) + "個";
+                        groups.Add(new VisGroup { name = name, paths = paths });
+                        LookChanged();
+                    });
+                }
+                ev.Use();
+            }
         }
 
         // ---- チェック ----
@@ -572,7 +639,7 @@ namespace LollipopCandy.AvatarHub
         private void DrawLookCard()
         {
             AvatarLook look = _previewEntry.look;
-            using (Ui.Card("ポーズ・表情", _previewEntry.name + " 専用"))
+            using (Ui.Card("ポーズ", _previewEntry.name + " 専用"))
             {
                 AnimationClip clip = ThumbAssets.LoadClip(look.clipGuid);
                 EditorGUI.BeginChangeCheck();
@@ -586,136 +653,37 @@ namespace LollipopCandy.AvatarHub
                 if (clip != null)
                 {
                     EditorGUI.BeginChangeCheck();
-                    float t = EditorGUILayout.Slider("再生位置(秒)", look.clipTime, 0f, Mathf.Max(0.01f, clip.length));
+                    float tm = EditorGUILayout.Slider("再生位置(秒)", look.clipTime, 0f, Mathf.Max(0.01f, clip.length));
                     if (EditorGUI.EndChangeCheck())
                     {
-                        look.clipTime = t;
+                        look.clipTime = tm;
                         LookChanged();
                     }
                 }
 
-                GUILayout.Space(4f);
-                GUILayout.Label("表情(ブレンドシェイプ)", Ui.BigLabel);
-                int remove = -1;
-                for (int i = 0; i < look.blends.Count; i++)
-                {
-                    BlendOverride b = look.blends[i];
-                    using (new EditorGUILayout.HorizontalScope())
-                    {
-                        EditorGUI.BeginChangeCheck();
-                        float w = EditorGUILayout.Slider(b.shape, b.weight, 0f, 100f);
-                        if (EditorGUI.EndChangeCheck())
-                        {
-                            b.weight = w;
-                            LookChanged();
-                        }
-                        if (GUILayout.Button("×", EditorStyles.miniButton, GUILayout.Width(22f))) remove = i;
-                    }
-                }
-                if (remove >= 0)
-                {
-                    look.blends.RemoveAt(remove);
-                    LookChanged();
-                }
-
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    if (Ui.Button("＋ 表情を追加", false, 110f, 22f))
+                    using (new EditorGUI.DisabledScope(!look.HasPose))
                     {
-                        var menu = new GenericMenu();
-                        foreach (string n in _session.BlendShapeNames())
+                        if (Ui.Button("ポーズをリセット", false, 0f, 22f))
                         {
-                            string name = n;
-                            if (look.blends.Any(x => x.shape == name))
-                            {
-                                menu.AddDisabledItem(new GUIContent(name));
-                            }
-                            else
-                            {
-                                menu.AddItem(new GUIContent(name), false, () =>
-                                {
-                                    look.blends.Add(new BlendOverride { shape = name, weight = 100f });
-                                    LookChanged();
-                                });
-                            }
-                        }
-                        menu.ShowAsContext();
-                    }
-                    if (Ui.Button("ポーズ・表情をリセット", false, 0f, 22f))
-                    {
-                        look.clipGuid = "";
-                        look.clipTime = 0f;
-                        look.blends.Clear();
-                        LookChanged();
-                    }
-                }
-
-                // 表情プリセット(ブレンドシェイプ名で適用するため、別アバターにも使い回せる)
-                GUILayout.Space(4f);
-                GUILayout.Label("表情プリセット", Ui.Muted);
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    _presetName = EditorGUILayout.TextField(_presetName);
-                    using (new EditorGUI.DisabledScope(string.IsNullOrWhiteSpace(_presetName) || look.blends.Count == 0))
-                    {
-                        if (Ui.Button("保存", false, 50f, 20f))
-                        {
-                            RecordUndo("表情プリセット保存");
-                            s.exprPresets.RemoveAll(p => p.name == _presetName.Trim());
-                            s.exprPresets.Add(new ExprPreset
-                            {
-                                name = _presetName.Trim(),
-                                blends = look.blends.Select(x => new BlendOverride { shape = x.shape, weight = x.weight }).ToList()
-                            });
-                        }
-                    }
-                }
-                if (s.exprPresets.Count > 0)
-                {
-                    using (new EditorGUILayout.HorizontalScope())
-                    {
-                        string[] pn = new[] { "(プリセットを選ぶ)" }.Concat(s.exprPresets.Select(p => p.name)).ToArray();
-                        EditorGUI.BeginChangeCheck();
-                        int pick = EditorGUILayout.Popup(0, pn);
-                        if (EditorGUI.EndChangeCheck() && pick > 0)
-                        {
-                            ExprPreset p = s.exprPresets[pick - 1];
-                            look.blends = p.blends.Select(x => new BlendOverride { shape = x.shape, weight = x.weight }).ToList();
+                            look.clipGuid = "";
+                            look.clipTime = 0f;
                             LookChanged();
                         }
-                        if (Ui.Button("プリセット削除…", false, 100f, 20f))
+                        if (Ui.Button("選択中の他アバターにも適用", false, 0f, 22f))
                         {
-                            var menu = new GenericMenu();
-                            foreach (ExprPreset p in s.exprPresets.ToList())
+                            int cnt = 0;
+                            foreach (AvatarEntry e in _entries)
                             {
-                                ExprPreset target = p;
-                                menu.AddItem(new GUIContent(p.name), false, () =>
-                                {
-                                    RecordUndo("表情プリセット削除");
-                                    s.exprPresets.Remove(target);
-                                    Repaint();
-                                });
+                                if (e == _previewEntry || !e.selected) continue;
+                                e.look.CopyPoseFrom(look);
+                                cnt++;
                             }
-                            menu.ShowAsContext();
+                            MarkEntriesDirty();
+                            _viewDirty = true;
+                            ShowNotification(new GUIContent(cnt + " 体に適用しました"));
                         }
-                    }
-                }
-
-                GUILayout.Space(4f);
-                using (new EditorGUI.DisabledScope(!look.HasPoseOrExpression))
-                {
-                    if (Ui.Button("このポーズ・表情を、選択中の他アバターにも適用", false, 0f, 24f))
-                    {
-                        int n = 0;
-                        foreach (AvatarEntry e in _entries)
-                        {
-                            if (e == _previewEntry || !e.selected) continue;
-                            e.look.CopyPoseFrom(look);
-                            n++;
-                        }
-                        MarkEntriesDirty();
-                        _viewDirty = true;
-                        ShowNotification(new GUIContent(n + " 体に適用しました"));
                     }
                 }
             }

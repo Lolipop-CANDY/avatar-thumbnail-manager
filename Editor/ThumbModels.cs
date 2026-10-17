@@ -84,18 +84,13 @@ namespace LollipopCandy.AvatarHub
         }
     }
 
+    /// <summary>非表示/強制表示の「まとまり」。複数のオブジェクト(衣装・ギミックなど)を1つとして扱う。</summary>
     [System.Serializable]
-    internal sealed class BlendOverride
-    {
-        public string shape = "";
-        public float weight = 100f;
-    }
-
-    [System.Serializable]
-    internal sealed class ExprPreset
+    internal sealed class VisGroup
     {
         public string name = "";
-        public List<BlendOverride> blends = new List<BlendOverride>();
+        public bool enabled = true;
+        public List<string> paths = new List<string>();   // アバタールートからの相対パス
     }
 
     /// <summary>アバター個別の撮影設定(カメラ・ポーズ・表情・背景)。DBに保存される。</summary>
@@ -110,23 +105,60 @@ namespace LollipopCandy.AvatarHub
 
         public string clipGuid = "";
         public float clipTime;
-        public List<BlendOverride> blends = new List<BlendOverride>();
 
         public bool bgOverride;
         public BackgroundSpec bg = new BackgroundSpec();
 
-        // 表示の個別上書き(アバタールートからの相対パス)
+        // 表示の個別上書き
+        public List<VisGroup> hideGroups = new List<VisGroup>();
+        public List<VisGroup> showGroups = new List<VisGroup>();
+
+        // v3.0.1 の旧データ(読み込み時に groups へ移行)
         public List<string> hidePaths = new List<string>();
         public List<string> showPaths = new List<string>();
 
-        public bool HasVisibilityOverrides
+        public void MigrateLegacy()
         {
-            get { return (hidePaths != null && hidePaths.Count > 0) || (showPaths != null && showPaths.Count > 0); }
+            if (hideGroups == null) hideGroups = new List<VisGroup>();
+            if (showGroups == null) showGroups = new List<VisGroup>();
+            if (hidePaths != null)
+            {
+                foreach (string p in hidePaths) hideGroups.Add(new VisGroup { name = LastName(p), paths = new List<string> { p } });
+                hidePaths.Clear();
+            }
+            if (showPaths != null)
+            {
+                foreach (string p in showPaths) showGroups.Add(new VisGroup { name = LastName(p), paths = new List<string> { p } });
+                showPaths.Clear();
+            }
         }
 
-        public bool HasPoseOrExpression
+        private static string LastName(string path)
         {
-            get { return !string.IsNullOrEmpty(clipGuid) || (blends != null && blends.Count > 0); }
+            int k = path.LastIndexOf('/');
+            return k >= 0 ? path.Substring(k + 1) : path;
+        }
+
+        public bool HasVisibilityOverrides
+        {
+            get { return (hideGroups != null && hideGroups.Count > 0) || (showGroups != null && showGroups.Count > 0); }
+        }
+
+        public static List<string> Flatten(List<VisGroup> groups)
+        {
+            var list = new List<string>();
+            if (groups == null) return list;
+            foreach (VisGroup g in groups)
+            {
+                if (g == null || !g.enabled || g.paths == null) continue;
+                list.AddRange(g.paths);
+            }
+            return list;
+        }
+
+        public bool HasPose
+        {
+            get { return !string.IsNullOrEmpty(clipGuid); }
         }
 
         public int PoseHash()
@@ -134,16 +166,7 @@ namespace LollipopCandy.AvatarHub
             unchecked
             {
                 int h = clipGuid == null ? 0 : clipGuid.GetHashCode();
-                h = h * 31 + clipTime.GetHashCode();
-                if (blends != null)
-                {
-                    for (int i = 0; i < blends.Count; i++)
-                    {
-                        h = h * 31 + (blends[i].shape == null ? 0 : blends[i].shape.GetHashCode());
-                        h = h * 31 + blends[i].weight.GetHashCode();
-                    }
-                }
-                return h;
+                return h * 31 + clipTime.GetHashCode();
             }
         }
 
@@ -151,7 +174,6 @@ namespace LollipopCandy.AvatarHub
         {
             clipGuid = other.clipGuid;
             clipTime = other.clipTime;
-            blends = other.blends.Select(b => new BlendOverride { shape = b.shape, weight = b.weight }).ToList();
         }
     }
 
@@ -204,9 +226,6 @@ namespace LollipopCandy.AvatarHub
         public int outH = 1024;
         public int outFormat = (int)OutFormat.Png;
         public int jpgQuality = 92;
-
-        // 表情プリセット
-        public List<ExprPreset> exprPresets = new List<ExprPreset>();
 
         // v2 からの移行用(読み込み専用)
         [System.Serializable]
@@ -267,7 +286,6 @@ namespace LollipopCandy.AvatarHub
                 rev = 2;
             }
             if (bg == null) bg = new BackgroundSpec();
-            if (exprPresets == null) exprPresets = new List<ExprPreset>();
             outW = Mathf.Clamp(outW, 64, 4096);
             outH = Mathf.Clamp(outH, 64, 4096);
             jpgQuality = Mathf.Clamp(jpgQuality, 40, 100);

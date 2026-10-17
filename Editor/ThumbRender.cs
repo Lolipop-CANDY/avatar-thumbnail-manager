@@ -651,6 +651,52 @@ namespace LollipopCandy.AvatarHub
             return string.Join("/", parts.ToArray());
         }
 
+        /// <summary>シーン上のオブジェクトが、このアバターの内側ならルートからの相対パスを返す(外ならnull)。</summary>
+        public string PathOf(GameObject go)
+        {
+            if (go == null || _srcRoot == null) return null;
+            Transform t = go.transform;
+            if (t == _srcRoot || !t.IsChildOf(_srcRoot)) return null;
+            return RelativePath(t);
+        }
+
+        public sealed class Bundle
+        {
+            public string path;
+            public bool activeInScene;
+            public bool gimmick;   // MAなどのコンポーネントを持つ「まとまり」
+        }
+
+        private static bool HasGimmickComponent(GameObject g)
+        {
+            foreach (Component c in g.GetComponents<Component>())
+            {
+                if (c == null) continue;
+                string n = c.GetType().Name;
+                if (n.StartsWith("ModularAvatar", System.StringComparison.Ordinal)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>アバター内のオブジェクトから「まとまり」候補を自動検出する(衣装・小物・MAギミックなど)。</summary>
+        public List<Bundle> ListBundles()
+        {
+            var list = new List<Bundle>();
+            var seen = new HashSet<string>();
+            for (int i = 0; i < _srcT.Length; i++)
+            {
+                Transform t = _srcT[i];
+                if (t == null) continue;
+                bool topLevel = t.parent == _srcRoot;
+                bool gimmick = HasGimmickComponent(t.gameObject);
+                if (!topLevel && !gimmick) continue;
+                if (t.GetComponentInChildren<Renderer>(true) == null) continue; // 何も映らないものは候補にしない
+                if (!seen.Add(_paths[i])) continue;
+                list.Add(new Bundle { path = _paths[i], activeInScene = t.gameObject.activeInHierarchy, gimmick = gimmick });
+            }
+            return list;
+        }
+
         /// <summary>撮影に含められる(Rendererを持つ)オブジェクトの一覧。パスとシーン上の表示状態。</summary>
         public List<KeyValuePair<string, bool>> ListRendererObjects()
         {
@@ -785,7 +831,7 @@ namespace LollipopCandy.AvatarHub
         public void ApplyLook(AvatarLook look)
         {
             RestoreBase();
-            if (look != null) SetVisibilityOverrides(look.hidePaths, look.showPaths);
+            if (look != null) SetVisibilityOverrides(AvatarLook.Flatten(look.hideGroups), AvatarLook.Flatten(look.showGroups));
             if (look != null)
             {
                 AnimationClip clip = ThumbAssets.LoadClip(look.clipGuid);
@@ -794,36 +840,9 @@ namespace LollipopCandy.AvatarHub
                     try { clip.SampleAnimation(_root, Mathf.Clamp(look.clipTime, 0f, clip.length)); }
                     catch (System.Exception e) { Debug.LogWarning("[AvatarThumbnail] ポーズの適用に失敗: " + e.Message); }
                 }
-                if (look.blends != null) ApplyBlends(look.blends);
             }
             RecalcBounds();
             _statsValid = false;
-        }
-
-        private void ApplyBlends(List<BlendOverride> blends)
-        {
-            for (int b = 0; b < blends.Count; b++)
-            {
-                if (string.IsNullOrEmpty(blends[b].shape)) continue;
-                for (int i = 0; i < _smrs.Length; i++)
-                {
-                    if (_smrs[i] == null || _smrs[i].sharedMesh == null) continue;
-                    int idx = _smrs[i].sharedMesh.GetBlendShapeIndex(blends[b].shape);
-                    if (idx >= 0) _smrs[i].SetBlendShapeWeight(idx, blends[b].weight);
-                }
-            }
-        }
-
-        public List<string> BlendShapeNames()
-        {
-            var set = new SortedDictionary<string, bool>(System.StringComparer.Ordinal);
-            for (int i = 0; i < _smrs.Length; i++)
-            {
-                Mesh m = _smrs[i] != null ? _smrs[i].sharedMesh : null;
-                if (m == null) continue;
-                for (int k = 0; k < m.blendShapeCount; k++) set[m.GetBlendShapeName(k)] = true;
-            }
-            return set.Keys.ToList();
         }
 
         // ---- 範囲・カメラ ----

@@ -87,7 +87,7 @@ namespace LollipopCandy.AvatarHub
                     memo = r.memo,
                     tag = r.tag ?? "",
                     manual = r.manual,
-                    look = r.look ?? new AvatarLook(),
+                    look = MigrateLook(r.look),
                     sceneObject = go
                 });
             }
@@ -99,6 +99,13 @@ namespace LollipopCandy.AvatarHub
             _viewDirty = true;
             if (_saveEntriesAt < 0 && _entries.Count > 0) MarkEntriesDirty();
             Repaint();
+        }
+
+        private static AvatarLook MigrateLook(AvatarLook look)
+        {
+            if (look == null) look = new AvatarLook();
+            look.MigrateLegacy();
+            return look;
         }
 
         /// <summary>シーン上のアバターのうち、リストに無いものを追加する。追加数を返す。</summary>

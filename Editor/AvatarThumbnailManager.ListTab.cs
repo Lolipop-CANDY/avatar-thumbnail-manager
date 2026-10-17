@@ -277,7 +277,7 @@ namespace LollipopCandy.AvatarHub
                 if (e.duplicateName) cx = Chip(cx, r.y + 6f, "同名", Ui.Sky);
                 if (e.manual) cx = Chip(cx, r.y + 6f, "手動", Ui.Sky);
                 if (e.look.hasCamera) cx = Chip(cx, r.y + 6f, "個別カメラ", Ui.Sky);
-                if (e.look.HasPoseOrExpression) cx = Chip(cx, r.y + 6f, "ポーズ", Ui.Sky);
+                if (e.look.HasPose) cx = Chip(cx, r.y + 6f, "ポーズ", Ui.Sky);
             }
 
             // タグ・メモ
