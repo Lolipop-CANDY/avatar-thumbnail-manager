@@ -1,7 +1,7 @@
 {
   "name": "com.lollipopcandy.avatar-thumbnail-manager",
   "displayName": "Avatar Thumbnail Manager",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "unity": "2022.3",
   "description": "VRChatアバターサムネイル撮影管理ツール。シーンの見た目そのままで撮影、リアルタイムプレビュー、構図/背景/ポーズ・表情、全シーン一括撮影に対応。",
   "author": {
