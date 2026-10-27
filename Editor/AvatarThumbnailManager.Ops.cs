@@ -76,7 +76,14 @@ namespace LollipopCandy.AvatarHub
                 {
                     go = avatars.FirstOrDefault(a => !claimed.Contains(a) && a.name == r.name); // 旧版データ互換
                 }
-                if (go != null) claimed.Add(go);
+                if (go != null)
+                {
+                    claimed.Add(go);
+                    string sid = AvatarIdentity.GetStableId(go);
+                    if (!string.IsNullOrEmpty(sid)) r.id = sid;
+                    string bid = AvatarIdentity.GetBlueprintId(go);
+                    if (!string.IsNullOrEmpty(bid)) r.blueprintId = bid;
+                }
 
                 _entries.Add(new AvatarEntry
                 {
@@ -99,6 +106,72 @@ namespace LollipopCandy.AvatarHub
             _viewDirty = true;
             if (_saveEntriesAt < 0 && _entries.Count > 0) MarkEntriesDirty();
             Repaint();
+        }
+
+        /// <summary>現在のアバター名に合わせた保存先(拡張子は今の画像と同じ)。他アバターとは重複させない。</summary>
+        private string DesiredPath(AvatarEntry e)
+        {
+            var used = new HashSet<string>();
+            foreach (AvatarEntry x in _entries)
+            {
+                if (x == e || string.IsNullOrEmpty(x.thumbnailPath)) continue;
+                used.Add(ThumbStore.WithExtension(x.thumbnailPath, ".png"));
+                used.Add(ThumbStore.WithExtension(x.thumbnailPath, ".jpg"));
+            }
+            string ext = string.IsNullOrEmpty(e.thumbnailPath) ? ".png" : Path.GetExtension(e.thumbnailPath).ToLowerInvariant();
+            string p = ThumbStore.MakeThumbPath(_sceneKey, e.name, used);
+            return ThumbStore.WithExtension(p, ext);
+        }
+
+        private void SyncNameFromScene(AvatarEntry e)
+        {
+            if (e.sceneObject != null && e.name != e.sceneObject.name) e.name = e.sceneObject.name;
+            if (e.sceneObject != null)
+            {
+                // 再割り当てされたIDやBlueprint IDにも追従する
+                string id = AvatarIdentity.GetStableId(e.sceneObject);
+                if (!string.IsNullOrEmpty(id)) e.id = id;
+                string bp = AvatarIdentity.GetBlueprintId(e.sceneObject);
+                if (!string.IsNullOrEmpty(bp)) e.blueprintId = bp;
+            }
+        }
+
+        /// <summary>画像ファイル名を現在のアバター名に合わせる(「リストを更新」時)。変更数を返す。</summary>
+        private int SyncThumbNames()
+        {
+            int changed = 0;
+            foreach (AvatarEntry e in _entries)
+            {
+                SyncNameFromScene(e);
+                if (string.IsNullOrEmpty(e.thumbnailPath)) continue;
+                string desired = DesiredPath(e);
+                if (string.Equals(desired, e.thumbnailPath, System.StringComparison.OrdinalIgnoreCase)) continue;
+
+                if (!File.Exists(e.thumbnailPath))
+                {
+                    e.thumbnailPath = desired; // 画像がまだ無ければ、次の撮影から新しい名前で保存
+                    changed++;
+                    continue;
+                }
+                if (File.Exists(desired)) continue; // 同名の別ファイルがあれば上書きしない
+
+                Directory.CreateDirectory(Path.GetDirectoryName(desired));
+                string err = AssetDatabase.MoveAsset(e.thumbnailPath, desired);
+                if (!string.IsNullOrEmpty(err))
+                {
+                    Debug.LogWarning("[AvatarThumbnail] 画像の名前変更に失敗: " + err);
+                    continue;
+                }
+                ThumbHistory.Rename(e.thumbnailPath, desired);
+                e.thumbnailPath = desired;
+                changed++;
+            }
+            if (changed > 0)
+            {
+                AssetDatabase.Refresh();
+                RefreshThumbFlags();
+            }
+            return changed;
         }
 
         private static AvatarLook MigrateLook(AvatarLook look)
@@ -174,8 +247,12 @@ namespace LollipopCandy.AvatarHub
 
             MarkDuplicates();
             RefreshThumbFlags();
+            int renamed = SyncThumbNames();
+            MarkDuplicates();
             _viewDirty = true;
             MarkEntriesDirty();
+            if (renamed > 0) ShowNotification(new GUIContent("リストを更新しました(画像名を " + renamed + " 件、現在のアバター名に合わせました)"));
+            else ShowNotification(new GUIContent("リストを更新しました"));
         }
 
         private void AddManual(GameObject go)
@@ -636,6 +713,7 @@ namespace LollipopCandy.AvatarHub
         private void SaveThumbnail(RenderSession session, AvatarEntry e, out bool archivedOld)
         {
             archivedOld = false;
+            SyncNameFromScene(e);
             CamRig rig = RigFor(e, session);
             ResolvedBg bg = BgResolver.Resolve(EffectiveBg(e), session, s.Format, false);
             Texture2D tex = session.RenderComposite(s.outW, s.outH, rig, bg, null);
@@ -645,18 +723,20 @@ namespace LollipopCandy.AvatarHub
             {
                 byte[] bytes = s.Format == OutFormat.Jpg ? tex.EncodeToJPG(s.jpgQuality) : tex.EncodeToPNG();
                 string ext = ThumbSettings.Extension(s.Format);
-                string newPath = ThumbStore.WithExtension(e.thumbnailPath, ext);
                 string oldPath = e.thumbnailPath;
+                // 保存先は「現在のアバター名」で決める(改名後に撮影した画像も新しい名前になる)
+                string newPath = ThumbStore.WithExtension(DesiredPath(e), ext);
 
                 Directory.CreateDirectory(Path.GetDirectoryName(newPath));
 
                 string existing = File.Exists(newPath) ? newPath : (File.Exists(oldPath) ? oldPath : null);
-                if (existing != null) archivedOld = ThumbHistory.Archive(existing) != null;
+                if (existing != null) archivedOld = ThumbHistory.Archive(existing, newPath) != null;
+                if (!string.Equals(oldPath, newPath, System.StringComparison.OrdinalIgnoreCase)) ThumbHistory.Rename(oldPath, newPath);
 
                 File.WriteAllBytes(newPath, bytes);
                 if (existing != null && existing != newPath && File.Exists(existing))
                 {
-                    AssetDatabase.DeleteAsset(existing); // 形式変更時の旧ファイル(履歴に退避済み)
+                    AssetDatabase.DeleteAsset(existing); // 旧名・旧形式のファイル(履歴に退避済み)
                 }
                 e.thumbnailPath = newPath;
                 e.hasThumb = true;

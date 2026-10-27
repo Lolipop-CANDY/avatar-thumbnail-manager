@@ -118,7 +118,7 @@ namespace LollipopCandy.AvatarHub
             {
                 if (e.sceneObject != null && e.name != e.sceneObject.name)
                 {
-                    e.name = e.sceneObject.name; // 表示名だけ追従。ID・保存先は変わらない
+                    e.name = e.sceneObject.name; // 表示名が変わった。画像名は次の撮影/リスト更新で追従
                     renamed = true;
                 }
             }

@@ -511,29 +511,55 @@ namespace LollipopCandy.AvatarHub
         }
 
         /// <summary>現在の画像を履歴フォルダへコピーする。退避したパスを返す(無ければ null)。</summary>
-        public static string Archive(string thumbPath)
+        public static string Archive(string thumbPath, string asPath = null)
         {
             try
             {
                 if (!File.Exists(thumbPath)) return null;
-                string dir = DirFor(thumbPath);
+                string key = asPath ?? thumbPath;   // 履歴の名前(改名後の名前で保存したい時に指定)
+                string dir = DirFor(key);
                 Directory.CreateDirectory(dir);
                 string stamp = System.DateTime.Now.ToString("yyyyMMdd-HHmmss");
-                string dst = dir + "/" + Stem(thumbPath) + "_" + stamp + Path.GetExtension(thumbPath);
+                string dst = dir + "/" + Stem(key) + "_" + stamp + Path.GetExtension(thumbPath);
                 int n = 2;
                 while (File.Exists(dst))
                 {
-                    dst = dir + "/" + Stem(thumbPath) + "_" + stamp + "-" + n + Path.GetExtension(thumbPath);
+                    dst = dir + "/" + Stem(key) + "_" + stamp + "-" + n + Path.GetExtension(thumbPath);
                     n++;
                 }
                 File.Copy(thumbPath, dst, false);
-                Prune(thumbPath);
+                Prune(key);
                 return dst;
             }
             catch (System.Exception e)
             {
                 Debug.LogWarning("[AvatarThumbnail] 履歴の保存に失敗: " + e.Message);
                 return null;
+            }
+        }
+
+        /// <summary>アバター名の変更に合わせて、履歴ファイルの名前も付け替える。</summary>
+        public static void Rename(string oldThumbPath, string newThumbPath)
+        {
+            if (Stem(oldThumbPath) == Stem(newThumbPath)) return;
+            try
+            {
+                string oldPrefix = Stem(oldThumbPath);
+                string newStem = Stem(newThumbPath);
+                string newDir = DirFor(newThumbPath);
+                foreach (string f in List(oldThumbPath))
+                {
+                    string tail = Path.GetFileNameWithoutExtension(f).Substring(oldPrefix.Length); // "_日時"
+                    string dst = newDir + "/" + newStem + tail + Path.GetExtension(f);
+                    if (File.Exists(dst)) continue;
+                    Directory.CreateDirectory(newDir);
+                    string err = AssetDatabase.MoveAsset(f, dst);
+                    if (!string.IsNullOrEmpty(err)) Debug.LogWarning("[AvatarThumbnail] 履歴の移動に失敗: " + err);
+                }
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning("[AvatarThumbnail] 履歴の名前変更に失敗: " + e.Message);
             }
         }
 
